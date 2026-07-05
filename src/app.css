@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, "Segoe UI Mono", "JetBrains Mono", "Menlo",
+    monospace;
+
+  /* Surface — dark first. Very slightly cool black, not pure. */
+  --color-bg: #0a0b0d;
+  --color-surface: #12141a;
+  --color-surface-hover: #181b23;
+  --color-border: #26292f;
+  --color-border-strong: #3a3f47;
+
+  /* Text */
+  --color-fg: #e4e6ea;
+  --color-fg-muted: #7a828e;
+  --color-fg-dim: #4a4f57;
+
+  /* Semantic — signature verdicts and status */
+  --color-accent: #5eb3f5;      /* headers, focus, PID column */
+  --color-ok: #4ade80;          /* MS Windows signed */
+  --color-warn: #facc15;        /* PPL / pending / warning */
+  --color-danger: #f87171;      /* unsigned / kill */
+  --color-remote: #e879f9;      /* hostnames */
+}
+
+html,
+body {
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden; /* no page-level scroll — panels handle their own */
+}
+
+/* Numbers, PIDs, sizes: tabular so columns align */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom scrollbar — thin, matches surface */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 5px;
+  border: 2px solid var(--color-bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+/* Select-all is overkill for a monitoring tool; disable except on paths/cmdlines */
+* {
+  user-select: none;
+}
+.selectable,
+.selectable * {
+  user-select: text;
+  cursor: text;
+}

@@ -1,0 +1,48 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust MSVC toolchain
+        run: rustup default stable-x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - run: npm ci
+
+      # tauri-action builds the app, uploads artifacts, and creates the
+      # GitHub Release when tagName / releaseName / body are set.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "winglass ${{ github.ref_name }}"
+          releaseBody: |
+            Windows process manager with real Authenticode signature verification.
+
+            **Install:** download and run the `.msi` installer below, or grab
+            the portable `.exe` if you prefer to keep it out of Program Files.
+
+            SHA-256 of each artifact is printed at the end of the build log.
+          releaseDraft: true
+          prerelease: false
