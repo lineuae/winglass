@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, onDestroy } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import {
     Search,
     ShieldCheck,
@@ -10,6 +11,9 @@
     ArrowDown,
     Info,
     Activity,
+    ListTree,
+    ChevronRight,
+    ChevronDown,
   } from "lucide-svelte";
   import DetailPanel from "$lib/DetailPanel.svelte";
   import Sparkline from "$lib/Sparkline.svelte";
@@ -26,6 +30,8 @@
   });
   let sortKey = $state<SortKey>("cpu");
   let sortDesc = $state(true);
+  let treeView = $state(false);
+  let collapsed = new SvelteSet<number>();
   let loading = $state(true);
   let error = $state<string | null>(null);
   let selectedPid = $state<number | null>(null);
@@ -129,13 +135,22 @@
     }
   }
 
-  const view = $derived.by(() => {
+  type Row = {
+    p: ProcessInfo;
+    depth: number;
+    hasChildren: boolean;
+    isMatch: boolean;
+  };
+
+  const view = $derived.by<Row[]>(() => {
     const needle = filter.toLowerCase();
-    let filtered = procs;
-    if (needle) filtered = filtered.filter((p) => p.name.toLowerCase().includes(needle));
-    for (const f of filters) {
-      if (active[f.key]) filtered = filtered.filter(f.predicate);
-    }
+    const matches = (p: ProcessInfo): boolean => {
+      if (needle && !p.name.toLowerCase().includes(needle)) return false;
+      for (const f of filters) {
+        if (active[f.key] && !f.predicate(p)) return false;
+      }
+      return true;
+    };
     const cmp = (a: ProcessInfo, b: ProcessInfo): number => {
       switch (sortKey) {
         case "pid": return a.pid - b.pid;
@@ -147,7 +162,67 @@
           return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       }
     };
-    return [...filtered].sort((a, b) => (sortDesc ? cmp(b, a) : cmp(a, b)));
+    const sortSiblings = (arr: ProcessInfo[]) =>
+      [...arr].sort((a, b) => (sortDesc ? cmp(b, a) : cmp(a, b)));
+
+    if (!treeView) {
+      return sortSiblings(procs.filter(matches)).map((p) => ({
+        p,
+        depth: 0,
+        hasChildren: false,
+        isMatch: true,
+      }));
+    }
+
+    // Tree mode. Build a parent → children index, keep only processes whose
+    // parent is also in the current list — the rest become roots.
+    const byPid = new Map<number, ProcessInfo>();
+    for (const p of procs) byPid.set(p.pid, p);
+    const childrenOf = new Map<number, ProcessInfo[]>();
+    for (const p of procs) {
+      const ppid = p.parent_pid;
+      if (ppid !== null && byPid.has(ppid)) {
+        let arr = childrenOf.get(ppid);
+        if (!arr) {
+          arr = [];
+          childrenOf.set(ppid, arr);
+        }
+        arr.push(p);
+      }
+    }
+
+    // matched = directly satisfies the filter/search predicate.
+    // keep = matched ∪ every ancestor of a matched node, so the hierarchy
+    // stays legible when the user filters. Non-matched ancestors are dimmed
+    // at render time via row.isMatch.
+    const matched = new Set<number>();
+    for (const p of procs) if (matches(p)) matched.add(p.pid);
+    const keep = new Set<number>(matched);
+    for (const pid of matched) {
+      let cur = byPid.get(pid);
+      while (cur) {
+        const ppid = cur.parent_pid;
+        if (ppid === null || !byPid.has(ppid)) break;
+        keep.add(ppid);
+        cur = byPid.get(ppid);
+      }
+    }
+
+    const roots = procs.filter(
+      (p) => keep.has(p.pid) && (p.parent_pid === null || !byPid.has(p.parent_pid))
+    );
+
+    const out: Row[] = [];
+    const walk = (nodes: ProcessInfo[], depth: number) => {
+      for (const p of sortSiblings(nodes.filter((n) => keep.has(n.pid)))) {
+        const kids = (childrenOf.get(p.pid) ?? []).filter((c) => keep.has(c.pid));
+        const hasChildren = kids.length > 0;
+        out.push({ p, depth, hasChildren, isMatch: matched.has(p.pid) });
+        if (hasChildren && !collapsed.has(p.pid)) walk(kids, depth + 1);
+      }
+    };
+    walk(roots, 0);
+    return out;
   });
 
   const stats = $derived({
@@ -225,14 +300,19 @@
       e.preventDefault();
       return;
     }
+    if (e.key === "t") {
+      treeView = !treeView;
+      e.preventDefault();
+      return;
+    }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       if (view.length === 0) return;
-      const idx = selectedPid !== null ? view.findIndex((p) => p.pid === selectedPid) : -1;
+      const idx = selectedPid !== null ? view.findIndex((r) => r.p.pid === selectedPid) : -1;
       const delta = e.key === "ArrowDown" ? 1 : -1;
       const next = idx === -1
         ? (delta === 1 ? 0 : view.length - 1)
         : Math.max(0, Math.min(view.length - 1, idx + delta));
-      selectedPid = view[next].pid;
+      selectedPid = view[next].p.pid;
       e.preventDefault();
       // Scroll into view
       queueMicrotask(() => {
@@ -301,6 +381,20 @@
         </button>
       {/each}
     </div>
+
+    <div class="w-px h-5 bg-[var(--color-border)]"></div>
+
+    <button
+      onclick={() => (treeView = !treeView)}
+      title="Toggle process tree view  (press t)"
+      class="flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-xs whitespace-nowrap transition-colors"
+      style:color={treeView ? "var(--color-fg)" : "var(--color-fg-muted)"}
+      style:border-color={treeView ? "var(--color-border-strong)" : "var(--color-border)"}
+      style:background-color={treeView ? "var(--color-surface)" : "transparent"}
+    >
+      <ListTree size={12} />
+      Tree
+    </button>
 
     <div class="flex items-center gap-5 text-[var(--color-fg-muted)] text-xs tabular ml-auto">
       <span>
@@ -376,13 +470,14 @@
               </tr>
             </thead>
             <tbody>
-              {#each view as p (p.pid)}
+              {#each view as { p, depth, hasChildren, isMatch } (p.pid)}
                 {@const ioText = fmtMbps(p.io_bps)}
                 {@const netText = fmtMbps(p.net_bps)}
                 <tr
                   data-pid={p.pid}
                   class="border-b border-[var(--color-border)]/40 hover:bg-[var(--color-surface-hover)] transition-colors cursor-default"
                   class:bg-[var(--color-surface)]={selectedPid === p.pid}
+                  class:opacity-50={!isMatch}
                   onclick={() => (selectedPid = p.pid)}
                 >
                   <td class="text-right px-3 py-1.5 text-[var(--color-accent)] tabular">
@@ -417,7 +512,28 @@
                     {netText || "—"}
                   </td>
                   <td class="px-3 py-1.5">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2" style:padding-left="{depth * 14}px">
+                      {#if treeView}
+                        {#if hasChildren}
+                          <button
+                            class="flex items-center justify-center w-4 h-4 -ml-0.5 text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] shrink-0"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              if (collapsed.has(p.pid)) collapsed.delete(p.pid);
+                              else collapsed.add(p.pid);
+                            }}
+                            title={collapsed.has(p.pid) ? "Expand" : "Collapse"}
+                          >
+                            {#if collapsed.has(p.pid)}
+                              <ChevronRight size={12} />
+                            {:else}
+                              <ChevronDown size={12} />
+                            {/if}
+                          </button>
+                        {:else}
+                          <span class="w-4 shrink-0"></span>
+                        {/if}
+                      {/if}
                       <span
                         class="w-1.5 h-1.5 rounded-full shrink-0"
                         style:background-color={sigColor(p.sig)}
@@ -478,6 +594,7 @@
         <kbd class="text-[var(--color-fg-muted)]">n</kbd>
         presets
       </span>
+      <span><kbd class="text-[var(--color-fg-muted)]">t</kbd> tree</span>
       <span><kbd class="text-[var(--color-fg-muted)]">k</kbd> kill</span>
       <span><kbd class="text-[var(--color-fg-muted)]">Esc</kbd> close</span>
     </div>

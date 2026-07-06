@@ -59,6 +59,7 @@ impl SigInfo {
 #[derive(Serialize, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
+    pub parent_pid: Option<u32>,
     pub name: String,
     pub exe_path: Option<String>,
     pub cpu: f32,

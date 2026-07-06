@@ -11,6 +11,7 @@ export interface SigInfo {
 
 export interface ProcessInfo {
   pid: number;
+  parent_pid: number | null;
   name: string;
   exe_path: string | null;
   cpu: number;

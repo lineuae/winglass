@@ -185,13 +185,14 @@ impl AppState {
             .unwrap_or_default();
 
         // Collect immutable sysinfo view first so we can freely mutate self below.
-        let raw: Vec<(u32, String, f32, f64, Option<String>)> = self
+        let raw: Vec<(u32, Option<u32>, String, f32, f64, Option<String>)> = self
             .sys
             .processes()
             .values()
             .map(|p| {
                 (
                     p.pid().as_u32(),
+                    p.parent().map(|pid| pid.as_u32()),
                     p.name().to_string_lossy().into_owned(),
                     p.cpu_usage(),
                     p.memory() as f64 / MEBI,
@@ -216,7 +217,7 @@ impl AppState {
         self.handles_cache.retain(|pid, _| live.contains(pid));
 
         let mut infos = Vec::with_capacity(raw.len());
-        for (pid, name, cpu, mem_mb, sys_exe) in raw {
+        for (pid, parent_pid, name, cpu, mem_mb, sys_exe) in raw {
             let exe_path = self.resolve_exe_path(pid, sys_exe);
 
             let cpu_h = self.cpu_history.entry(pid).or_default();
@@ -245,6 +246,7 @@ impl AppState {
 
             infos.push(ProcessInfo {
                 pid,
+                parent_pid,
                 name,
                 exe_path,
                 cpu,
