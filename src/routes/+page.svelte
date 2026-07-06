@@ -9,6 +9,7 @@
     ArrowUp,
     ArrowDown,
     Info,
+    Activity,
   } from "lucide-svelte";
   import DetailPanel from "$lib/DetailPanel.svelte";
   import type { ProcessInfo, SigInfo } from "$lib/types";
@@ -17,6 +18,11 @@
 
   let procs = $state<ProcessInfo[]>([]);
   let filter = $state("");
+  let active = $state<Record<FilterKey, boolean>>({
+    unsigned: false,
+    msWindows: false,
+    net: false,
+  });
   let sortKey = $state<SortKey>("cpu");
   let sortDesc = $state(true);
   let loading = $state(true);
@@ -30,6 +36,59 @@
   let filterInput = $state<HTMLInputElement | null>(null);
   let tableContainer = $state<HTMLDivElement | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Single classifier the badge color, badge title, stats counter, and filter
+  // predicates all switch on — so widening the "Windows OS" rule (or adding a
+  // new SigStatus variant) changes one place, not five.
+  type SigKind = "os" | "signed" | "unsigned" | "failed" | "pending";
+  function sigKind(sig: SigInfo): SigKind {
+    if (sig.status === "valid") return sig.is_ms_windows ? "os" : "signed";
+    return sig.status;
+  }
+
+  type FilterKey = "unsigned" | "msWindows" | "net";
+  type FilterDef = {
+    key: FilterKey;
+    Icon: typeof ShieldOff;
+    label: string;
+    cssVar: string;
+    shortcut: string;
+    tip: string;
+    predicate: (p: ProcessInfo) => boolean;
+    disabled?: () => boolean;
+    disabledTip?: string;
+  };
+  const filters: FilterDef[] = [
+    {
+      key: "unsigned",
+      Icon: ShieldOff,
+      label: "Unsigned",
+      cssVar: "--color-danger",
+      shortcut: "u",
+      tip: "Show only unsigned processes",
+      predicate: (p) => sigKind(p.sig) === "unsigned",
+    },
+    {
+      key: "msWindows",
+      Icon: ShieldCheck,
+      label: "Windows OS",
+      cssVar: "--color-ok",
+      shortcut: "w",
+      tip: "Show only Microsoft Windows-signed processes",
+      predicate: (p) => sigKind(p.sig) === "os",
+    },
+    {
+      key: "net",
+      Icon: Activity,
+      label: "Network",
+      cssVar: "--color-accent",
+      shortcut: "n",
+      tip: "Show only processes with current network activity",
+      predicate: (p) => p.net_bps > 0,
+      disabled: () => !netMonitorActive,
+      disabledTip: "Network monitoring needs admin — filter unavailable",
+    },
+  ];
 
   async function refresh() {
     try {
@@ -71,9 +130,11 @@
 
   const view = $derived.by(() => {
     const needle = filter.toLowerCase();
-    const filtered = needle
-      ? procs.filter((p) => p.name.toLowerCase().includes(needle))
-      : procs;
+    let filtered = procs;
+    if (needle) filtered = filtered.filter((p) => p.name.toLowerCase().includes(needle));
+    for (const f of filters) {
+      if (active[f.key]) filtered = filtered.filter(f.predicate);
+    }
     const cmp = (a: ProcessInfo, b: ProcessInfo): number => {
       switch (sortKey) {
         case "pid": return a.pid - b.pid;
@@ -92,7 +153,7 @@
     totalCpu: procs.reduce((s, p) => s + p.cpu, 0),
     totalMemGb: procs.reduce((s, p) => s + p.mem_mb, 0) / 1024,
     totalProcs: procs.length,
-    unsigned: procs.filter((p) => p.sig.status === "unsigned").length,
+    unsigned: procs.filter((p) => sigKind(p.sig) === "unsigned").length,
   });
 
   const MEBI = 1024 * 1024;
@@ -102,22 +163,26 @@
     return mb.toFixed(1);
   }
 
+  const SIG_COLOR: Record<SigKind, string> = {
+    os: "var(--color-ok)",
+    signed: "var(--color-fg-muted)",
+    unsigned: "var(--color-danger)",
+    failed: "var(--color-warn)",
+    pending: "var(--color-fg-dim)",
+  };
   function sigColor(sig: SigInfo): string {
-    if (sig.status === "valid" && sig.is_ms_windows) return "var(--color-ok)";
-    if (sig.status === "valid") return "var(--color-fg-muted)";
-    if (sig.status === "unsigned") return "var(--color-danger)";
-    if (sig.status === "failed") return "var(--color-warn)";
-    return "var(--color-fg-dim)";
+    return SIG_COLOR[sigKind(sig)];
   }
 
   function sigTitle(sig: SigInfo): string {
-    if (sig.status === "valid" && sig.is_ms_windows)
-      return `Signed by ${sig.signer} (Windows OS)`;
-    if (sig.status === "valid") return `Signed by ${sig.signer}`;
-    if (sig.status === "unsigned") return "Unsigned";
-    if (sig.status === "failed")
-      return `Verify failed (0x${sig.error_code?.toString(16).toUpperCase()})`;
-    return "Verifying...";
+    switch (sigKind(sig)) {
+      case "os": return `Signed by ${sig.signer} (Windows OS)`;
+      case "signed": return `Signed by ${sig.signer}`;
+      case "unsigned": return "Unsigned";
+      case "failed":
+        return `Verify failed (0x${sig.error_code?.toString(16).toUpperCase()})`;
+      case "pending": return "Verifying...";
+    }
   }
 
   const sortableColumns: {
@@ -153,6 +218,12 @@
       e.preventDefault();
       return;
     }
+    const preset = filters.find((f) => f.shortcut === e.key);
+    if (preset && !preset.disabled?.()) {
+      active[preset.key] = !active[preset.key];
+      e.preventDefault();
+      return;
+    }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       if (view.length === 0) return;
       const idx = selectedPid !== null ? view.findIndex((p) => p.pid === selectedPid) : -1;
@@ -185,7 +256,7 @@
       <span class="text-[var(--color-fg)] font-medium tracking-tight">winglass</span>
     </div>
 
-    <div class="flex-1 max-w-md relative">
+    <div class="flex-1 max-w-sm relative">
       <Search
         size={14}
         class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -200,7 +271,37 @@
       />
     </div>
 
-    <div class="flex items-center gap-5 text-[var(--color-fg-muted)] text-xs tabular">
+    <div class="flex items-center gap-1.5">
+      {#each filters as f (f.key)}
+        {@const isDisabled = f.disabled?.() ?? false}
+        {@const state = isDisabled ? "disabled" : active[f.key] ? "on" : "off"}
+        {@const Icon = f.Icon}
+        <button
+          onclick={() => (active[f.key] = !active[f.key])}
+          disabled={isDisabled}
+          title={isDisabled
+            ? (f.disabledTip ?? f.tip)
+            : `${f.tip}  (press ${f.shortcut})`}
+          class="flex items-center gap-1.5 h-7 px-2.5 rounded-md border text-xs whitespace-nowrap transition-colors disabled:cursor-not-allowed"
+          style:color={state === "on"
+            ? `var(${f.cssVar})`
+            : state === "disabled"
+              ? "var(--color-fg-dim)"
+              : "var(--color-fg-muted)"}
+          style:border-color={state === "on"
+            ? `color-mix(in oklch, var(${f.cssVar}) 40%, transparent)`
+            : "var(--color-border)"}
+          style:background-color={state === "on"
+            ? `color-mix(in oklch, var(${f.cssVar}) 12%, transparent)`
+            : "transparent"}
+        >
+          <Icon size={12} />
+          {f.label}
+        </button>
+      {/each}
+    </div>
+
+    <div class="flex items-center gap-5 text-[var(--color-fg-muted)] text-xs tabular ml-auto">
       <span>
         <span class="text-[var(--color-fg)] tabular">{stats.totalProcs}</span>
         procs
@@ -326,7 +427,7 @@
                       ></span>
                       <span
                         class="truncate"
-                        class:text-[var(--color-ok)]={p.sig.status === "valid" && p.sig.is_ms_windows}
+                        class:text-[var(--color-ok)]={sigKind(p.sig) === "os"}
                       >
                         {p.name}
                       </span>
@@ -373,6 +474,12 @@
       <span><kbd class="text-[var(--color-fg-muted)]">↑ ↓</kbd> select</span>
       <span><kbd class="text-[var(--color-fg-muted)]">Enter</kbd>/click open</span>
       <span><kbd class="text-[var(--color-fg-muted)]">/</kbd> filter</span>
+      <span>
+        <kbd class="text-[var(--color-fg-muted)]">u</kbd>
+        <kbd class="text-[var(--color-fg-muted)]">w</kbd>
+        <kbd class="text-[var(--color-fg-muted)]">n</kbd>
+        presets
+      </span>
       <span><kbd class="text-[var(--color-fg-muted)]">k</kbd> kill</span>
       <span><kbd class="text-[var(--color-fg-muted)]">Esc</kbd> close</span>
     </div>
