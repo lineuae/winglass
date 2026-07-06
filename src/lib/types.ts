@@ -48,6 +48,22 @@ export type DllsResult =
   | { Ok: { entries: DllEntry[]; unsigned_count: number } }
   | { Denied: string };
 
+export interface ThreadInfo {
+  tid: number;
+  state: string;
+  wait_reason: string;
+  priority: number;
+  base_priority: number;
+  context_switches: number;
+  user_time_100ns: number;
+  kernel_time_100ns: number;
+  start_address: number;
+}
+
+export type ThreadsResult =
+  | { Ok: ThreadInfo[] }
+  | { Error: string };
+
 export interface EnvEntry {
   key: string;
   value: string;
@@ -80,5 +96,6 @@ export interface ProcessDetail {
   net_history: number[];
   connections: ConnectionInfo[];
   dlls: DllsResult;
+  threads: ThreadsResult;
   environ: EnvEntry[];
 }

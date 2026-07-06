@@ -3,7 +3,7 @@
   import { X, Skull, ShieldCheck, Shield, ShieldOff, ShieldAlert } from "lucide-svelte";
   import Sparkline from "./Sparkline.svelte";
   import { fmtBytes, fmtMbps, fmtDuration } from "./format";
-  import type { ProcessDetail, SigInfo } from "./types";
+  import type { ProcessDetail, SigInfo, ThreadInfo } from "./types";
 
   interface Props {
     pid: number;
@@ -96,6 +96,39 @@
   }
 
   let envOpen = $state(false);
+  let threadsOpen = $state(false);
+
+  function fmtCpuSeconds(hundredNs: number): string {
+    // 100-ns ticks → seconds
+    const s = hundredNs / 1e7;
+    if (s < 0.001) return "0";
+    if (s < 1) return `${(s * 1000).toFixed(0)} ms`;
+    if (s < 60) return `${s.toFixed(1)} s`;
+    const m = Math.floor(s / 60);
+    const rem = s - m * 60;
+    return `${m}m ${rem.toFixed(0)}s`;
+  }
+
+  function threadStateColor(state: string): string {
+    switch (state) {
+      case "Running": return "var(--color-ok)";
+      case "Ready":
+      case "Standby":
+      case "DeferredReady": return "var(--color-warn)";
+      case "Terminated": return "var(--color-danger)";
+      case "Waiting":
+      case "Transition":
+      case "Initialized":
+      default: return "var(--color-fg-dim)";
+    }
+  }
+
+  function sortThreads(arr: ThreadInfo[]): ThreadInfo[] {
+    // Show Running first, then Ready/Standby, then everything else. TID ascending as tiebreaker.
+    const rank = (s: string) =>
+      s === "Running" ? 0 : s === "Ready" || s === "Standby" ? 1 : 2;
+    return [...arr].sort((a, b) => rank(a.state) - rank(b.state) || a.tid - b.tid);
+  }
 
   const publicRemotes = $derived(
     detail
@@ -348,6 +381,52 @@
               </div>
             {/each}
           </div>
+        {/if}
+      </section>
+
+      <!-- Threads -->
+      <section>
+        {#if "Error" in detail.threads}
+          <div class="flex items-baseline justify-between mb-2 pb-1 border-b border-[var(--color-border)]/50">
+            <h3 class="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">Threads</h3>
+            <span class="text-[10px] tabular" style:color="var(--color-warn)">{detail.threads.Error}</span>
+          </div>
+        {:else}
+          {@const all = detail.threads.Ok}
+          {@const running = all.filter((t) => t.state === "Running").length}
+          {@const waiting = all.filter((t) => t.state === "Waiting").length}
+          <button
+            type="button"
+            onclick={() => (threadsOpen = !threadsOpen)}
+            class="w-full flex items-baseline justify-between mb-2 pb-1 border-b border-[var(--color-border)]/50 hover:text-[var(--color-fg)] transition-colors text-left cursor-pointer"
+          >
+            <h3 class="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">Threads</h3>
+            <span class="text-[10px] text-[var(--color-fg-dim)] tabular">
+              {all.length} total · {running} running · {waiting} waiting · click to {threadsOpen ? "hide" : "show"}
+            </span>
+          </button>
+          {#if threadsOpen}
+            <div class="font-mono text-[11px] max-h-64 overflow-y-auto">
+              <div class="grid grid-cols-[70px_82px_1fr_60px_60px] gap-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-fg-dim)]">
+                <span>TID</span>
+                <span>State</span>
+                <span>Wait reason</span>
+                <span class="text-right">CPU</span>
+                <span class="text-right">Ctx sw</span>
+              </div>
+              {#each sortThreads(all) as t (t.tid)}
+                <div class="grid grid-cols-[70px_82px_1fr_60px_60px] gap-2 py-0.5 selectable">
+                  <span class="text-[var(--color-accent)] tabular">{t.tid}</span>
+                  <span style:color={threadStateColor(t.state)}>{t.state}</span>
+                  <span class="text-[var(--color-fg-muted)] truncate">{t.wait_reason}</span>
+                  <span class="text-[var(--color-fg-muted)] tabular text-right">
+                    {fmtCpuSeconds(t.user_time_100ns + t.kernel_time_100ns)}
+                  </span>
+                  <span class="text-[var(--color-fg-dim)] tabular text-right">{t.context_switches.toLocaleString()}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
         {/if}
       </section>
 

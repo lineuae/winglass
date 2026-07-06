@@ -13,13 +13,14 @@ use tauri::{Manager, State};
 mod dns;
 mod etw;
 mod net;
+mod threads;
 mod types;
 mod verify;
 mod win;
 
 use types::{
     ConnectionInfo, DllEntry, DllsResult, EnvEntry, IoDelta, IoSample, NetDelta, ParentEntry,
-    ProcessDetail, ProcessInfo, SigInfo,
+    ProcessDetail, ProcessInfo, SigInfo, ThreadsResult,
 };
 use verify::SigStatus;
 
@@ -506,6 +507,10 @@ impl AppState {
             net_history,
             connections,
             dlls,
+            threads: match threads::enum_threads(pid) {
+                Ok(v) => ThreadsResult::Ok(v),
+                Err(e) => ThreadsResult::Error(e),
+            },
             environ,
         })
     }
