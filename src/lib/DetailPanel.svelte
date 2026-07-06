@@ -7,11 +7,12 @@
 
   interface Props {
     pid: number;
+    netMonitorActive: boolean;
     onClose: () => void;
     onKilled: (name: string) => void;
   }
 
-  let { pid, onClose, onKilled }: Props = $props();
+  let { pid, netMonitorActive, onClose, onKilled }: Props = $props();
 
   let detail = $state<ProcessDetail | null>(null);
   let loading = $state(true);
@@ -56,6 +57,20 @@
     }
   }
 
+  function handleKey(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null;
+    if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA") return;
+
+    if (e.key === "k" && !killPrompt) {
+      killPrompt = true;
+      killError = null;
+      e.preventDefault();
+    } else if (e.key === "Enter" && killPrompt) {
+      void doKill();
+      e.preventDefault();
+    }
+  }
+
   function sigChip(sig: SigInfo) {
     if (sig.status === "valid" && sig.is_ms_windows)
       return { label: `Windows OS  ${sig.signer ?? ""}`, color: "var(--color-ok)", Icon: ShieldCheck };
@@ -91,6 +106,8 @@
     detail ? detail.connections.filter((c) => c.hostname).length : 0
   );
 </script>
+
+<svelte:window onkeydown={handleKey} />
 
 <aside
   class="flex flex-col h-full border-l border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden"
@@ -278,23 +295,29 @@
             {/if}
           </span>
         </div>
-        <div class="grid grid-cols-[1fr_1fr_96px] gap-3 items-end mb-3 text-xs">
-          <div>
-            <div class="text-[var(--color-fg-muted)] text-[10px] tabular">↓ Down</div>
-            <div class="tabular">{fmtMbps(detail.net_rx_bps, true)} MB/s</div>
-            <div class="text-[var(--color-fg-dim)] text-[10px] tabular">
-              total {fmtBytes(detail.net_rx_total)}
+        {#if netMonitorActive}
+          <div class="grid grid-cols-[1fr_1fr_96px] gap-3 items-end mb-3 text-xs">
+            <div>
+              <div class="text-[var(--color-fg-muted)] text-[10px] tabular">↓ Down</div>
+              <div class="tabular">{fmtMbps(detail.net_rx_bps, true)} MB/s</div>
+              <div class="text-[var(--color-fg-dim)] text-[10px] tabular">
+                total {fmtBytes(detail.net_rx_total)}
+              </div>
             </div>
-          </div>
-          <div>
-            <div class="text-[var(--color-fg-muted)] text-[10px] tabular">↑ Up</div>
-            <div class="tabular">{fmtMbps(detail.net_tx_bps, true)} MB/s</div>
-            <div class="text-[var(--color-fg-dim)] text-[10px] tabular">
-              total {fmtBytes(detail.net_tx_total)}
+            <div>
+              <div class="text-[var(--color-fg-muted)] text-[10px] tabular">↑ Up</div>
+              <div class="tabular">{fmtMbps(detail.net_tx_bps, true)} MB/s</div>
+              <div class="text-[var(--color-fg-dim)] text-[10px] tabular">
+                total {fmtBytes(detail.net_tx_total)}
+              </div>
             </div>
+            <Sparkline data={detail.net_history} color="var(--color-remote)" />
           </div>
-          <Sparkline data={detail.net_history} color="var(--color-remote)" />
-        </div>
+        {:else}
+          <div class="mb-3 px-2.5 py-1.5 text-[11px] text-[var(--color-fg-dim)] border border-dashed border-[var(--color-border)] rounded">
+            Per-process throughput needs winglass launched as Administrator (ETW).
+          </div>
+        {/if}
         {#if detail.connections.length}
           <div class="space-y-0.5 font-mono text-[11px]">
             {#each detail.connections as c}

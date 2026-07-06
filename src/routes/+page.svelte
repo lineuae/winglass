@@ -8,6 +8,7 @@
     Loader2,
     ArrowUp,
     ArrowDown,
+    Info,
   } from "lucide-svelte";
   import DetailPanel from "$lib/DetailPanel.svelte";
   import type { ProcessInfo, SigInfo } from "$lib/types";
@@ -22,6 +23,9 @@
   let error = $state<string | null>(null);
   let selectedPid = $state<number | null>(null);
   let toast = $state<{ msg: string; kind: "ok" | "err" } | null>(null);
+  // Assume available until proven otherwise so we don't flash the "needs admin"
+  // hint on every startup before the capability probe resolves.
+  let netMonitorActive = $state(true);
   let intervalId: ReturnType<typeof setInterval> | null = null;
   let filterInput = $state<HTMLInputElement | null>(null);
   let tableContainer = $state<HTMLDivElement | null>(null);
@@ -41,6 +45,9 @@
   onMount(() => {
     refresh();
     intervalId = setInterval(refresh, 1000);
+    invoke<boolean>("net_monitor_active")
+      .then((v) => (netMonitorActive = v))
+      .catch(() => (netMonitorActive = false));
   });
 
   onDestroy(() => {
@@ -213,6 +220,15 @@
           unsigned
         </span>
       {/if}
+      {#if !netMonitorActive}
+        <span
+          class="flex items-center gap-1 text-[var(--color-fg-dim)]"
+          title="Per-process network throughput uses ETW, which requires running winglass as Administrator (or as a member of the Performance Log Users group). The Net column will stay empty until then."
+        >
+          <Info size={12} />
+          Net: needs admin
+        </span>
+      {/if}
     </div>
   </header>
 
@@ -341,6 +357,7 @@
       <div class="w-[46%] max-w-[720px] min-w-[400px]">
         <DetailPanel
           pid={selectedPid}
+          {netMonitorActive}
           onClose={() => (selectedPid = null)}
           onKilled={(name) => showToast(`Killed ${name}`, "ok")}
         />
@@ -356,6 +373,7 @@
       <span><kbd class="text-[var(--color-fg-muted)]">↑ ↓</kbd> select</span>
       <span><kbd class="text-[var(--color-fg-muted)]">Enter</kbd>/click open</span>
       <span><kbd class="text-[var(--color-fg-muted)]">/</kbd> filter</span>
+      <span><kbd class="text-[var(--color-fg-muted)]">k</kbd> kill</span>
       <span><kbd class="text-[var(--color-fg-muted)]">Esc</kbd> close</span>
     </div>
     <div>winglass · click column headers to sort</div>

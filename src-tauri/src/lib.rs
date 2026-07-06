@@ -568,6 +568,11 @@ fn kill_process(pid: u32, state: State<'_, Shared>) -> Result<(), String> {
     app.kill(pid)
 }
 
+#[tauri::command]
+fn net_monitor_active(state: State<'_, Shared>) -> bool {
+    state.lock().unwrap().net_monitor.is_some()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -579,7 +584,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_processes,
             get_process_detail,
-            kill_process
+            kill_process,
+            net_monitor_active
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
