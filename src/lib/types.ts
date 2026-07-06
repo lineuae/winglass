@@ -37,6 +37,7 @@ export interface ConnectionInfo {
   remote: string | null;
   remote_ip: string | null;
   hostname: string | null;
+  country: string | null;
   state: string | null;
 }
 

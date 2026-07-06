@@ -87,6 +87,7 @@ pub struct ConnectionInfo {
     pub remote: Option<String>,
     pub remote_ip: Option<String>,
     pub hostname: Option<String>,
+    pub country: Option<String>, // ISO-3166 alpha-2 code, when GeoIP DB is bundled
     pub state: Option<&'static str>,
 }
 

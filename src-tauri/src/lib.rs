@@ -12,6 +12,7 @@ use tauri::{Manager, State};
 
 mod dns;
 mod etw;
+mod geoip;
 mod handles;
 mod net;
 mod threads;
@@ -58,6 +59,7 @@ pub struct AppState {
     dns_rx: Receiver<(IpAddr, Option<String>)>,
 
     net_snapshot: Vec<net::Connection>,
+    geoip: geoip::GeoIp,
     dll_cache: HashMap<u32, Result<Vec<String>, String>>,
     /// Cached per-pid handle enumeration. Same shape as `dll_cache`: `Ok` for
     /// a successful walk (empty vec means "no handles"), `Err` for a
@@ -67,7 +69,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new() -> Self {
+    fn new(geoip_path: Option<std::path::PathBuf>) -> Self {
         let (sig_tx, sig_rx) = verify::start_worker();
         let (dns_tx, dns_rx) = dns::start_worker();
         let net_monitor = match etw::NetMonitor::start() {
@@ -76,6 +78,10 @@ impl AppState {
                 eprintln!("[winglass] ETW network monitor unavailable: {}", e);
                 None
             }
+        };
+        let geoip = match geoip_path {
+            Some(p) => geoip::GeoIp::open(&p),
+            None => geoip::GeoIp::open(std::path::Path::new("")),
         };
         Self {
             sys: System::new(),
@@ -98,6 +104,7 @@ impl AppState {
             dns_tx,
             dns_rx,
             net_snapshot: Vec::new(),
+            geoip,
             dll_cache: HashMap::new(),
             handles_cache: HashMap::new(),
             sha_cache: HashMap::new(),
@@ -456,12 +463,17 @@ impl AppState {
                 let hostname = c
                     .remote
                     .and_then(|r| self.dns_cache.get(&r.ip()).cloned().flatten());
+                let country = c
+                    .remote
+                    .filter(|r| !dns::is_private_or_loopback(r.ip()))
+                    .and_then(|r| self.geoip.country(r.ip()));
                 ConnectionInfo {
                     proto: c.proto.to_string(),
                     local: c.local.to_string(),
                     remote: c.remote.map(|r| r.to_string()),
                     remote_ip: c.remote.map(|r| r.ip().to_string()),
                     hostname,
+                    country,
                     state: if c.state == 0 {
                         None
                     } else {
@@ -609,7 +621,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            app.manage(Mutex::new(AppState::new()));
+            let geoip_path = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|p| p.join("GeoLite2-Country.mmdb"));
+            app.manage(Mutex::new(AppState::new(geoip_path)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

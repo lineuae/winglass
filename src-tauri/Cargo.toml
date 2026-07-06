@@ -21,6 +21,7 @@ sha2 = "0.10"
 
 sysinfo = "0.32"
 ferrisetw = "1"
+maxminddb = "0.24"
 windows = { version = "0.57", features = [
     "Win32_Foundation",
     "Win32_System_Threading",

@@ -381,6 +381,14 @@
                   {:else}
                     <span class="text-[var(--color-fg-muted)]">{c.remote}</span>
                   {/if}
+                  {#if c.country}
+                    <span
+                      class="text-[10px] px-1 rounded border border-[var(--color-border)] text-[var(--color-fg-muted)] tabular"
+                      title="{c.country}"
+                    >
+                      {c.country}
+                    </span>
+                  {/if}
                 {/if}
                 {#if c.state}
                   <span
