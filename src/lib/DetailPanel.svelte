@@ -278,6 +278,23 @@
             {/if}
           </span>
         </div>
+        <div class="grid grid-cols-[1fr_1fr_96px] gap-3 items-end mb-3 text-xs">
+          <div>
+            <div class="text-[var(--color-fg-muted)] text-[10px] tabular">↓ Down</div>
+            <div class="tabular">{fmtMbps(detail.net_rx_bps, true)} MB/s</div>
+            <div class="text-[var(--color-fg-dim)] text-[10px] tabular">
+              total {fmtBytes(detail.net_rx_total)}
+            </div>
+          </div>
+          <div>
+            <div class="text-[var(--color-fg-muted)] text-[10px] tabular">↑ Up</div>
+            <div class="tabular">{fmtMbps(detail.net_tx_bps, true)} MB/s</div>
+            <div class="text-[var(--color-fg-dim)] text-[10px] tabular">
+              total {fmtBytes(detail.net_tx_total)}
+            </div>
+          </div>
+          <Sparkline data={detail.net_history} color="var(--color-remote)" />
+        </div>
         {#if detail.connections.length}
           <div class="space-y-0.5 font-mono text-[11px]">
             {#each detail.connections as c}

@@ -12,7 +12,7 @@
   import DetailPanel from "$lib/DetailPanel.svelte";
   import type { ProcessInfo, SigInfo } from "$lib/types";
 
-  type SortKey = "pid" | "cpu" | "mem_mb" | "io_bps" | "name";
+  type SortKey = "pid" | "cpu" | "mem_mb" | "io_bps" | "net_bps" | "name";
 
   let procs = $state<ProcessInfo[]>([]);
   let filter = $state("");
@@ -73,6 +73,7 @@
         case "cpu": return a.cpu - b.cpu;
         case "mem_mb": return a.mem_mb - b.mem_mb;
         case "io_bps": return a.io_bps - b.io_bps;
+        case "net_bps": return a.net_bps - b.net_bps;
         case "name":
           return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       }
@@ -115,11 +116,12 @@
   const sortableColumns: {
     key: SortKey; label: string; align: "left" | "right"; widthClass: string;
   }[] = [
-    { key: "pid",    label: "PID",    align: "right", widthClass: "w-20" },
-    { key: "cpu",    label: "CPU %",  align: "right", widthClass: "w-28" },
-    { key: "mem_mb", label: "Memory", align: "right", widthClass: "w-24" },
-    { key: "io_bps", label: "I/O",    align: "right", widthClass: "w-24" },
-    { key: "name",   label: "Name",   align: "left",  widthClass: "w-auto" },
+    { key: "pid",     label: "PID",    align: "right", widthClass: "w-20" },
+    { key: "cpu",     label: "CPU %",  align: "right", widthClass: "w-28" },
+    { key: "mem_mb",  label: "Memory", align: "right", widthClass: "w-24" },
+    { key: "io_bps",  label: "I/O",    align: "right", widthClass: "w-24" },
+    { key: "net_bps", label: "Net",    align: "right", widthClass: "w-24" },
+    { key: "name",    label: "Name",   align: "left",  widthClass: "w-auto" },
   ];
 
   // Keyboard shortcuts
@@ -258,6 +260,7 @@
             <tbody>
               {#each view as p (p.pid)}
                 {@const ioText = fmtMbps(p.io_bps)}
+                {@const netText = fmtMbps(p.net_bps)}
                 <tr
                   data-pid={p.pid}
                   class="border-b border-[var(--color-border)]/40 hover:bg-[var(--color-surface-hover)] transition-colors cursor-default"
@@ -287,6 +290,16 @@
                     class:text-[var(--color-fg-dim)]={!ioText}
                   >
                     {ioText || "—"}
+                  </td>
+                  <td
+                    class="text-right px-3 py-1.5 tabular"
+                    class:text-[var(--color-fg)]={!!netText}
+                    class:text-[var(--color-fg-dim)]={!netText}
+                    title={netText
+                      ? `${(p.net_rx_bps / MEBI).toFixed(2)} MB/s ↓   ${(p.net_tx_bps / MEBI).toFixed(2)} MB/s ↑`
+                      : ""}
+                  >
+                    {netText || "—"}
                   </td>
                   <td class="px-3 py-1.5">
                     <div class="flex items-center gap-2">

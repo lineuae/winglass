@@ -20,6 +20,18 @@ impl IoDelta {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct NetDelta {
+    pub rx_bps: f64,
+    pub tx_bps: f64,
+}
+
+impl NetDelta {
+    pub fn total_bps(&self) -> f64 {
+        self.rx_bps + self.tx_bps
+    }
+}
+
 /// Wire representation of a signature verdict — flat and cheap for the
 /// frontend to switch on. `status` is one of "valid" | "unsigned" | "failed"
 /// | "pending".
@@ -54,6 +66,9 @@ pub struct ProcessInfo {
     pub io_bps: f64,           // total (read + write + other)
     pub io_read_bps: f64,
     pub io_write_bps: f64,
+    pub net_bps: f64,          // total (rx + tx)
+    pub net_rx_bps: f64,
+    pub net_tx_bps: f64,
     pub sig: SigInfo,
 }
 
@@ -115,6 +130,12 @@ pub struct ProcessDetail {
     pub io_read_total: u64,
     pub io_write_total: u64,
     pub io_other_total: u64,
+
+    pub net_rx_bps: f64,
+    pub net_tx_bps: f64,
+    pub net_rx_total: u64,
+    pub net_tx_total: u64,
+    pub net_history: Vec<f64>,
 
     pub connections: Vec<ConnectionInfo>,
     pub dlls: DllsResult,

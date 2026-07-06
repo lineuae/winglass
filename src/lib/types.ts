@@ -18,6 +18,9 @@ export interface ProcessInfo {
   io_bps: number;
   io_read_bps: number;
   io_write_bps: number;
+  net_bps: number;
+  net_rx_bps: number;
+  net_tx_bps: number;
   sig: SigInfo;
 }
 
@@ -70,6 +73,11 @@ export interface ProcessDetail {
   io_read_total: number;
   io_write_total: number;
   io_other_total: number;
+  net_rx_bps: number;
+  net_tx_bps: number;
+  net_rx_total: number;
+  net_tx_total: number;
+  net_history: number[];
   connections: ConnectionInfo[];
   dlls: DllsResult;
   environ: EnvEntry[];

@@ -11,14 +11,15 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind, Us
 use tauri::{Manager, State};
 
 mod dns;
+mod etw;
 mod net;
 mod types;
 mod verify;
 mod win;
 
 use types::{
-    ConnectionInfo, DllEntry, DllsResult, EnvEntry, IoDelta, IoSample, ParentEntry, ProcessDetail,
-    ProcessInfo, SigInfo,
+    ConnectionInfo, DllEntry, DllsResult, EnvEntry, IoDelta, IoSample, NetDelta, ParentEntry,
+    ProcessDetail, ProcessInfo, SigInfo,
 };
 use verify::SigStatus;
 
@@ -32,6 +33,15 @@ pub struct AppState {
     io_state: HashMap<u32, (IoSample, Instant)>,
     io_delta: HashMap<u32, IoDelta>,
     io_total: HashMap<u32, IoSample>,
+
+    /// ETW producer of per-PID (rx, tx) cumulative totals. `None` when the
+    /// user-mode session couldn't be started (not admin / no perf-log-users
+    /// membership); the app runs without net throughput in that case.
+    net_monitor: Option<etw::NetMonitor>,
+    net_state: HashMap<u32, (etw::NetBytes, Instant)>,
+    net_delta: HashMap<u32, NetDelta>,
+    net_total: HashMap<u32, etw::NetBytes>,
+    net_history: HashMap<u32, VecDeque<f64>>,
 
     cpu_history: HashMap<u32, VecDeque<f32>>,
     mem_history: HashMap<u32, VecDeque<f64>>,
@@ -54,12 +64,24 @@ impl AppState {
     fn new() -> Self {
         let (sig_tx, sig_rx) = verify::start_worker();
         let (dns_tx, dns_rx) = dns::start_worker();
+        let net_monitor = match etw::NetMonitor::start() {
+            Ok(m) => Some(m),
+            Err(e) => {
+                eprintln!("[winglass] ETW network monitor unavailable: {}", e);
+                None
+            }
+        };
         Self {
             sys: System::new(),
             users: Users::new_with_refreshed_list(),
             io_state: HashMap::new(),
             io_delta: HashMap::new(),
             io_total: HashMap::new(),
+            net_monitor,
+            net_state: HashMap::new(),
+            net_delta: HashMap::new(),
+            net_total: HashMap::new(),
+            net_history: HashMap::new(),
             cpu_history: HashMap::new(),
             mem_history: HashMap::new(),
             exe_path_cache: HashMap::new(),
@@ -146,6 +168,15 @@ impl AppState {
             .refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
         self.net_snapshot = net::snapshot();
 
+        // One-shot copy of the ETW counter table. Held briefly and released
+        // before we do any per-pid work — the callback thread keeps
+        // accumulating in the background.
+        let net_totals: HashMap<u32, etw::NetBytes> = self
+            .net_monitor
+            .as_ref()
+            .map(|m| m.snapshot())
+            .unwrap_or_default();
+
         // Collect immutable sysinfo view first so we can freely mutate self below.
         let raw: Vec<(u32, String, f32, f64, Option<String>)> = self
             .sys
@@ -167,6 +198,10 @@ impl AppState {
         self.io_state.retain(|pid, _| live.contains(pid));
         self.io_delta.retain(|pid, _| live.contains(pid));
         self.io_total.retain(|pid, _| live.contains(pid));
+        self.net_state.retain(|pid, _| live.contains(pid));
+        self.net_delta.retain(|pid, _| live.contains(pid));
+        self.net_total.retain(|pid, _| live.contains(pid));
+        self.net_history.retain(|pid, _| live.contains(pid));
         self.cpu_history.retain(|pid, _| live.contains(pid));
         self.mem_history.retain(|pid, _| live.contains(pid));
         self.exe_path_cache.retain(|pid, _| live.contains(pid));
@@ -190,6 +225,10 @@ impl AppState {
             self.sample_io(pid, now);
             let io = self.io_delta.get(&pid).copied().unwrap_or_default();
 
+            let net_cum = net_totals.get(&pid).copied().unwrap_or_default();
+            self.sample_net(pid, now, net_cum);
+            let net = self.net_delta.get(&pid).copied().unwrap_or_default();
+
             if let Some(path) = &exe_path {
                 self.request_verify(path);
             }
@@ -204,6 +243,9 @@ impl AppState {
                 io_bps: io.total_bps(),
                 io_read_bps: io.read_bps,
                 io_write_bps: io.write_bps,
+                net_bps: net.total_bps(),
+                net_rx_bps: net.rx_bps,
+                net_tx_bps: net.tx_bps,
                 sig,
             });
         }
@@ -243,6 +285,35 @@ impl AppState {
         };
         self.io_state.insert(pid, (sample, now));
         self.io_delta.insert(pid, delta);
+    }
+
+    fn sample_net(&mut self, pid: u32, now: Instant, cum: etw::NetBytes) {
+        // Every PID present in the process table gets an entry, even if it
+        // hasn't transferred any bytes yet — that way the first delta after
+        // the process starts sending is real, not "cum - 0" which would spike.
+        let delta = match self.net_state.get(&pid) {
+            Some((prev, prev_at)) => {
+                let dt = now.duration_since(*prev_at).as_secs_f64();
+                if dt > 0.0 {
+                    NetDelta {
+                        rx_bps: cum.rx.saturating_sub(prev.rx) as f64 / dt,
+                        tx_bps: cum.tx.saturating_sub(prev.tx) as f64 / dt,
+                    }
+                } else {
+                    NetDelta::default()
+                }
+            }
+            None => NetDelta::default(),
+        };
+        self.net_state.insert(pid, (cum, now));
+        self.net_total.insert(pid, cum);
+        self.net_delta.insert(pid, delta);
+
+        let hist = self.net_history.entry(pid).or_default();
+        if hist.len() >= HISTORY_LEN {
+            hist.pop_front();
+        }
+        hist.push_back(delta.total_bps());
     }
 
     fn build_parent_chain(&self, mut ppid: Option<Pid>, max_hops: usize) -> Vec<ParentEntry> {
@@ -321,6 +392,8 @@ impl AppState {
 
         let io_delta = self.io_delta.get(&pid).copied().unwrap_or_default();
         let io_total = self.io_total.get(&pid).copied().unwrap_or_default();
+        let net_delta = self.net_delta.get(&pid).copied().unwrap_or_default();
+        let net_total = self.net_total.get(&pid).copied().unwrap_or_default();
         let cpu_history: Vec<f32> = self
             .cpu_history
             .get(&pid)
@@ -328,6 +401,11 @@ impl AppState {
             .unwrap_or_default();
         let mem_history: Vec<f64> = self
             .mem_history
+            .get(&pid)
+            .map(|h| h.iter().copied().collect())
+            .unwrap_or_default();
+        let net_history: Vec<f64> = self
+            .net_history
             .get(&pid)
             .map(|h| h.iter().copied().collect())
             .unwrap_or_default();
@@ -421,6 +499,11 @@ impl AppState {
             io_read_total: io_total.read,
             io_write_total: io_total.write,
             io_other_total: io_total.other,
+            net_rx_bps: net_delta.rx_bps,
+            net_tx_bps: net_delta.tx_bps,
+            net_rx_total: net_total.rx,
+            net_tx_total: net_total.tx,
+            net_history,
             connections,
             dlls,
             environ,
