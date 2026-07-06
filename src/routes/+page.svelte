@@ -12,6 +12,7 @@
     Activity,
   } from "lucide-svelte";
   import DetailPanel from "$lib/DetailPanel.svelte";
+  import Sparkline from "$lib/Sparkline.svelte";
   import type { ProcessInfo, SigInfo } from "$lib/types";
 
   type SortKey = "pid" | "cpu" | "mem_mb" | "io_bps" | "net_bps" | "name";
@@ -389,11 +390,8 @@
                   </td>
                   <td class="text-right px-3 py-1.5 tabular">
                     <div class="flex items-center justify-end gap-2">
-                      <div class="w-8 h-1 rounded-full bg-[var(--color-border)] overflow-hidden">
-                        <div
-                          class="h-full bg-[var(--color-accent)]"
-                          style:width="{Math.min(100, p.cpu)}%"
-                        ></div>
+                      <div class="w-10 shrink-0 opacity-80">
+                        <Sparkline data={p.cpu_history} height={14} />
                       </div>
                       <span class="w-10 text-right">{p.cpu.toFixed(1)}</span>
                     </div>

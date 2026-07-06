@@ -14,6 +14,7 @@ export interface ProcessInfo {
   name: string;
   exe_path: string | null;
   cpu: number;
+  cpu_history: number[];
   mem_mb: number;
   io_bps: number;
   io_read_bps: number;

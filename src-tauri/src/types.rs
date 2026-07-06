@@ -62,6 +62,7 @@ pub struct ProcessInfo {
     pub name: String,
     pub exe_path: Option<String>,
     pub cpu: f32,
+    pub cpu_history: Vec<f32>, // rolling 60-sample window for the row sparkline
     pub mem_mb: f64,
     pub io_bps: f64,           // total (read + write + other)
     pub io_read_bps: f64,

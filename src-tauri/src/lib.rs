@@ -224,6 +224,7 @@ impl AppState {
                 cpu_h.pop_front();
             }
             cpu_h.push_back(cpu);
+            let cpu_history: Vec<f32> = cpu_h.iter().copied().collect();
             let mem_h = self.mem_history.entry(pid).or_default();
             if mem_h.len() >= HISTORY_LEN {
                 mem_h.pop_front();
@@ -247,6 +248,7 @@ impl AppState {
                 name,
                 exe_path,
                 cpu,
+                cpu_history,
                 mem_mb,
                 io_bps: io.total_bps(),
                 io_read_bps: io.read_bps,
