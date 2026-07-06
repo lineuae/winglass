@@ -108,6 +108,12 @@ pub enum ThreadsResult {
 }
 
 #[derive(Serialize, Clone)]
+pub enum HandlesResult {
+    Ok(Vec<crate::handles::HandleInfo>),
+    Error(String),
+}
+
+#[derive(Serialize, Clone)]
 pub struct EnvEntry {
     pub key: String,
     pub value: String,
@@ -146,5 +152,6 @@ pub struct ProcessDetail {
     pub connections: Vec<ConnectionInfo>,
     pub dlls: DllsResult,
     pub threads: ThreadsResult,
+    pub handles: HandlesResult,
     pub environ: Vec<EnvEntry>,
 }

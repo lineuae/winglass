@@ -3,7 +3,7 @@
   import { X, Skull, ShieldCheck, Shield, ShieldOff, ShieldAlert } from "lucide-svelte";
   import Sparkline from "./Sparkline.svelte";
   import { fmtBytes, fmtMbps, fmtDuration } from "./format";
-  import type { ProcessDetail, SigInfo, ThreadInfo } from "./types";
+  import type { ProcessDetail, SigInfo, ThreadInfo, HandleInfo } from "./types";
 
   interface Props {
     pid: number;
@@ -97,6 +97,20 @@
 
   let envOpen = $state(false);
   let threadsOpen = $state(false);
+  let handlesOpen = $state(false);
+
+  function handleTypeHistogram(all: HandleInfo[]): Array<[string, number]> {
+    const m = new Map<string, number>();
+    for (const h of all) {
+      const t = h.type_name || "?";
+      m.set(t, (m.get(t) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }
+
+  function fmtHandle(v: number): string {
+    return "0x" + v.toString(16).toUpperCase().padStart(4, "0");
+  }
 
   function fmtCpuSeconds(hundredNs: number): string {
     // 100-ns ticks → seconds
@@ -509,6 +523,65 @@
               </div>
             {/each}
           </div>
+        {/if}
+      </section>
+
+      <!-- Handles -->
+      <section>
+        {#if "Error" in detail.handles}
+          <div class="flex items-baseline justify-between mb-2 pb-1 border-b border-[var(--color-border)]/50">
+            <h3 class="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">Handles</h3>
+            <span class="text-[10px] tabular" style:color="var(--color-warn)">{detail.handles.Error}</span>
+          </div>
+        {:else}
+          {@const handleList = detail.handles.Ok}
+          {@const histogram = handleTypeHistogram(handleList)}
+          {@const unresolved = handleList.filter((h) => !h.type_name).length}
+          <button
+            type="button"
+            onclick={() => (handlesOpen = !handlesOpen)}
+            class="w-full flex items-baseline justify-between mb-2 pb-1 border-b border-[var(--color-border)]/50 hover:text-[var(--color-fg)] transition-colors text-left cursor-pointer"
+          >
+            <h3 class="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">Handles</h3>
+            <span class="text-[10px] text-[var(--color-fg-dim)] tabular">
+              {handleList.length} open · {histogram.length} types{#if unresolved > 0} · {unresolved} unresolved{/if} · click to {handlesOpen ? "hide" : "show"}
+            </span>
+          </button>
+          {#if handlesOpen}
+            <div class="grid grid-cols-2 gap-x-6 gap-y-0.5 font-mono text-[11px] mb-3">
+              {#each histogram as [type, count]}
+                <div class="flex items-baseline justify-between">
+                  <span
+                    class:text-[var(--color-fg-dim)]={type === "?"}
+                    class:text-[var(--color-fg)]={type !== "?"}
+                  >
+                    {type}
+                  </span>
+                  <span class="text-[var(--color-fg-muted)] tabular">{count}</span>
+                </div>
+              {/each}
+            </div>
+            <div class="font-mono text-[11px] max-h-64 overflow-y-auto border-t border-[var(--color-border)]/40 pt-2">
+              <div class="grid grid-cols-[110px_1fr_80px] gap-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-fg-dim)]">
+                <span>Type</span>
+                <span>Handle</span>
+                <span class="text-right">Access</span>
+              </div>
+              {#each handleList as h (h.value)}
+                <div class="grid grid-cols-[110px_1fr_80px] gap-2 py-0.5 selectable">
+                  <span
+                    class:text-[var(--color-fg-dim)]={!h.type_name}
+                  >
+                    {h.type_name || "?"}
+                  </span>
+                  <span class="text-[var(--color-accent)] tabular">{fmtHandle(h.value)}</span>
+                  <span class="text-[var(--color-fg-muted)] tabular text-right">
+                    0x{h.granted_access.toString(16).toUpperCase().padStart(6, "0")}
+                  </span>
+                </div>
+              {/each}
+            </div>
+          {/if}
         {/if}
       </section>
     </div>

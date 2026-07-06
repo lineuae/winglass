@@ -64,6 +64,16 @@ export type ThreadsResult =
   | { Ok: ThreadInfo[] }
   | { Error: string };
 
+export interface HandleInfo {
+  value: number;
+  type_name: string;
+  granted_access: number;
+}
+
+export type HandlesResult =
+  | { Ok: HandleInfo[] }
+  | { Error: string };
+
 export interface EnvEntry {
   key: string;
   value: string;
@@ -97,5 +107,6 @@ export interface ProcessDetail {
   connections: ConnectionInfo[];
   dlls: DllsResult;
   threads: ThreadsResult;
+  handles: HandlesResult;
   environ: EnvEntry[];
 }

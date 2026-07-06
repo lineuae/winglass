@@ -12,6 +12,7 @@ use tauri::{Manager, State};
 
 mod dns;
 mod etw;
+mod handles;
 mod net;
 mod threads;
 mod types;
@@ -19,8 +20,8 @@ mod verify;
 mod win;
 
 use types::{
-    ConnectionInfo, DllEntry, DllsResult, EnvEntry, IoDelta, IoSample, NetDelta, ParentEntry,
-    ProcessDetail, ProcessInfo, SigInfo, ThreadsResult,
+    ConnectionInfo, DllEntry, DllsResult, EnvEntry, HandlesResult, IoDelta, IoSample, NetDelta,
+    ParentEntry, ProcessDetail, ProcessInfo, SigInfo, ThreadsResult,
 };
 use verify::SigStatus;
 
@@ -58,6 +59,10 @@ pub struct AppState {
 
     net_snapshot: Vec<net::Connection>,
     dll_cache: HashMap<u32, Result<Vec<String>, String>>,
+    /// Cached per-pid handle enumeration. Same shape as `dll_cache`: `Ok` for
+    /// a successful walk (empty vec means "no handles"), `Err` for a
+    /// per-process failure. Cleared when the pid dies.
+    handles_cache: HashMap<u32, Result<Vec<handles::HandleInfo>, String>>,
     sha_cache: HashMap<String, Option<String>>, // lowercase path -> hex digest
 }
 
@@ -94,6 +99,7 @@ impl AppState {
             dns_rx,
             net_snapshot: Vec::new(),
             dll_cache: HashMap::new(),
+            handles_cache: HashMap::new(),
             sha_cache: HashMap::new(),
         }
     }
@@ -207,6 +213,7 @@ impl AppState {
         self.mem_history.retain(|pid, _| live.contains(pid));
         self.exe_path_cache.retain(|pid, _| live.contains(pid));
         self.dll_cache.retain(|pid, _| live.contains(pid));
+        self.handles_cache.retain(|pid, _| live.contains(pid));
 
         let mut infos = Vec::with_capacity(raw.len());
         for (pid, name, cpu, mem_mb, sys_exe) in raw {
@@ -347,6 +354,14 @@ impl AppState {
         }
         let result = win::enum_dlls(pid);
         self.dll_cache.insert(pid, result);
+    }
+
+    fn ensure_handles(&mut self, pid: u32) {
+        if self.handles_cache.contains_key(&pid) {
+            return;
+        }
+        let result = handles::enum_handles(pid);
+        self.handles_cache.insert(pid, result);
     }
 
     fn build_detail(&mut self, pid: u32) -> Option<ProcessDetail> {
@@ -510,6 +525,13 @@ impl AppState {
             threads: match threads::enum_threads(pid) {
                 Ok(v) => ThreadsResult::Ok(v),
                 Err(e) => ThreadsResult::Error(e),
+            },
+            handles: {
+                self.ensure_handles(pid);
+                match self.handles_cache.get(&pid).cloned().unwrap() {
+                    Ok(v) => HandlesResult::Ok(v),
+                    Err(e) => HandlesResult::Error(e),
+                }
             },
             environ,
         })
