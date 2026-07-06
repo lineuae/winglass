@@ -8,13 +8,12 @@
 //! by `ObjectTypeIndex`, so a process with a thousand File handles only
 //! triggers one type query.
 //!
-//! We deliberately do NOT resolve object *names* (`ObjectNameInformation`).
-//! For pipes and some device objects, that call reaches into driver code
-//! that can block indefinitely; Process Explorer solves this with a
-//! dedicated worker thread that gets terminated on timeout. Adding that
-//! plumbing is a follow-up; for now the panel shows type + handle value +
-//! access mask, which is enough to see the shape of a process's kernel
-//! footprint.
+//! Object *names* (`ObjectNameInformation`) are resolved on a sacrificial
+//! worker thread per handle with a 50 ms per-call timeout and a 2 s
+//! total budget. Named pipes and some device objects can trap the query
+//! in driver code forever — when that happens we walk away from the
+//! thread and record None for that handle. The worker keeps the duplicated
+//! handle it was given and closes it when the syscall eventually returns.
 //!
 //! Handle enumeration itself does not require elevation, but resolving
 //! type names on protected processes fails at `OpenProcess(DUP_HANDLE)`.
@@ -23,13 +22,29 @@
 
 use std::collections::HashMap;
 use std::ptr;
+use std::sync::mpsc::sync_channel;
+use std::time::{Duration, Instant};
 
-use windows::Wdk::Foundation::{NtQueryObject, ObjectTypeInformation};
+use windows::Wdk::Foundation::{NtQueryObject, ObjectTypeInformation, OBJECT_INFORMATION_CLASS};
 use windows::Wdk::System::SystemInformation::{NtQuerySystemInformation, SYSTEM_INFORMATION_CLASS};
+
+// windows-rs 0.57 exports ObjectTypeInformation but not ObjectNameInformation
+// even though both are documented NT info classes. Canonical value = 1.
+const OBJECT_NAME_INFORMATION: OBJECT_INFORMATION_CLASS = OBJECT_INFORMATION_CLASS(1);
 use windows::Win32::Foundation::{
     CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, STATUS_INFO_LENGTH_MISMATCH,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE};
+
+/// Global budget for all name-resolution queries during a single
+/// `enum_handles` call. Once this elapses, remaining names come back None
+/// so the user still gets the panel before their next 1 Hz refresh.
+const NAME_TOTAL_BUDGET: Duration = Duration::from_millis(2000);
+
+/// Per-call timeout on NtQueryObject(ObjectNameInformation). Named pipes
+/// and some device objects can block indefinitely inside a driver — after
+/// this deadline we abandon the worker thread and record None.
+const NAME_PER_CALL_TIMEOUT: Duration = Duration::from_millis(50);
 
 const SYSTEM_EXTENDED_HANDLE_INFORMATION: SYSTEM_INFORMATION_CLASS = SYSTEM_INFORMATION_CLASS(64);
 
@@ -48,6 +63,11 @@ pub struct HandleInfo {
     pub value: u64,
     pub type_name: String,
     pub granted_access: u32,
+    /// Resolved object name (file path, key path, section name, …). None
+    /// when NtQueryObject didn't respond within the per-call timeout, when
+    /// the object simply has no name (many synchronization primitives),
+    /// or when the global name-resolution budget was exhausted.
+    pub name: Option<String>,
 }
 
 pub fn enum_handles(pid: u32) -> Result<Vec<HandleInfo>, String> {
@@ -59,26 +79,41 @@ pub fn enum_handles(pid: u32) -> Result<Vec<HandleInfo>, String> {
 
     // Open the target once and reuse its handle for every DuplicateHandle call.
     // Failing here is common for protected processes; we still return the raw
-    // list, just with empty type_name for entries we can't resolve.
+    // list, just with empty type_name/name for entries we can't resolve.
     let src = unsafe { OpenProcess(PROCESS_DUP_HANDLE, false, pid) }.ok();
     let mut type_cache: HashMap<u16, String> = HashMap::new();
+    let name_deadline = Instant::now() + NAME_TOTAL_BUDGET;
 
     let mut out = Vec::with_capacity(raw.len());
     for r in raw {
-        let type_name = if let Some(n) = type_cache.get(&r.type_index) {
-            n.clone()
+        let dup = src.and_then(|s| duplicate_locally(s, r.handle_value));
+
+        let type_name = if let Some(cached) = type_cache.get(&r.type_index) {
+            cached.clone()
         } else {
-            let n = src
-                .as_ref()
-                .and_then(|src| resolve_type_name(*src, r.handle_value))
-                .unwrap_or_default();
+            let n = dup.and_then(query_type_name).unwrap_or_default();
             type_cache.insert(r.type_index, n.clone());
             n
         };
+
+        // Name resolution takes ownership of `dup`. On success the worker
+        // closes it; on timeout the worker is still using it, so we must
+        // NOT close it here either — the leaked handle is released when
+        // the worker eventually returns (or on process exit).
+        let name = match dup {
+            Some(d) if Instant::now() < name_deadline => query_name_with_timeout(d),
+            Some(d) => {
+                unsafe { CloseHandle(d).ok() };
+                None
+            }
+            None => None,
+        };
+
         out.push(HandleInfo {
             value: r.handle_value,
             type_name,
             granted_access: r.granted_access,
+            name,
         });
     }
 
@@ -151,7 +186,7 @@ fn collect_for_pid(buf: &[u8], target_pid: u32) -> Vec<RawHandle> {
     out
 }
 
-fn resolve_type_name(src: HANDLE, foreign_handle: u64) -> Option<String> {
+fn duplicate_locally(src: HANDLE, foreign_handle: u64) -> Option<HANDLE> {
     let foreign = HANDLE(foreign_handle as isize);
     let me = unsafe { GetCurrentProcess() };
     let mut dup = HANDLE(0);
@@ -169,8 +204,10 @@ fn resolve_type_name(src: HANDLE, foreign_handle: u64) -> Option<String> {
     if ok.is_err() {
         return None;
     }
+    Some(dup)
+}
 
-    // 4 KiB is more than enough for OBJECT_TYPE_INFORMATION + the type name.
+fn query_type_name(dup: HANDLE) -> Option<String> {
     let mut buf = vec![0u8; 4096];
     let mut ret = 0u32;
     let status = unsafe {
@@ -182,28 +219,67 @@ fn resolve_type_name(src: HANDLE, foreign_handle: u64) -> Option<String> {
             Some(&mut ret),
         )
     };
-    let _ = unsafe { CloseHandle(dup) };
     if status.is_err() {
         return None;
     }
+    read_unicode_string(&buf)
+}
 
-    // Struct starts with UNICODE_STRING TypeName at offset 0 on x64:
-    //   USHORT Length; USHORT MaxLength; ULONG pad; PVOID Buffer;
+/// Runs NtQueryObject(ObjectNameInformation) on a sacrificial worker thread
+/// and waits up to NAME_PER_CALL_TIMEOUT for a reply. Named pipes and some
+/// device objects can trap this call inside a driver forever; when that
+/// happens we walk away from the thread — it stays alive and eventually
+/// releases `dup` when the syscall returns (or never, if the driver truly
+/// hangs, in which case it dies with the process). The worker owns `dup`
+/// from the moment we spawn it.
+fn query_name_with_timeout(dup: HANDLE) -> Option<String> {
+    // HANDLE isn't Send; smuggle it across the thread boundary as a raw
+    // integer and rebuild it inside the worker.
+    let dup_raw = dup.0 as usize;
+    let (tx, rx) = sync_channel::<Option<String>>(1);
+    std::thread::spawn(move || {
+        let handle = HANDLE(dup_raw as isize);
+        let name = query_object_name(handle);
+        unsafe { CloseHandle(handle).ok() };
+        let _ = tx.send(name);
+    });
+    rx.recv_timeout(NAME_PER_CALL_TIMEOUT).ok().flatten()
+}
+
+fn query_object_name(handle: HANDLE) -> Option<String> {
+    let mut buf = vec![0u8; 4096];
+    let mut ret = 0u32;
+    let status = unsafe {
+        NtQueryObject(
+            handle,
+            OBJECT_NAME_INFORMATION,
+            Some(buf.as_mut_ptr() as *mut _),
+            buf.len() as u32,
+            Some(&mut ret),
+        )
+    };
+    if status.is_err() {
+        return None;
+    }
+    read_unicode_string(&buf)
+}
+
+/// Decodes a UNICODE_STRING that the kernel wrote at the start of `buf`.
+/// Layout on x64: USHORT Length, USHORT MaxLength, ULONG pad, PVOID Buffer.
+/// The kernel patched Buffer to point inside `buf`; we sanity-check the
+/// range so a malformed reply can't send us reading arbitrary memory.
+fn read_unicode_string(buf: &[u8]) -> Option<String> {
     let length = unsafe { ptr::read_unaligned(buf.as_ptr() as *const u16) } as usize;
     let buffer_ptr = unsafe { ptr::read_unaligned(buf.as_ptr().add(8) as *const *const u16) };
     if length == 0 || buffer_ptr.is_null() {
         return None;
     }
-
-    // The kernel patched Buffer to point inside our buffer; sanity-check the
-    // range so a malformed reply can't send us reading arbitrary memory.
     let base = buf.as_ptr() as usize;
     let end = base + buf.len();
     let start = buffer_ptr as usize;
     if start < base || start.saturating_add(length) > end {
         return None;
     }
-
     let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, length / 2) };
     Some(String::from_utf16_lossy(slice))
 }

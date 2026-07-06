@@ -70,6 +70,7 @@ export interface HandleInfo {
   value: number;
   type_name: string;
   granted_access: number;
+  name: string | null;
 }
 
 export type HandlesResult =

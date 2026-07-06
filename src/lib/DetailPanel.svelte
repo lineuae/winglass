@@ -537,6 +537,7 @@
           {@const handleList = detail.handles.Ok}
           {@const histogram = handleTypeHistogram(handleList)}
           {@const unresolved = handleList.filter((h) => !h.type_name).length}
+          {@const named = handleList.filter((h) => h.name).length}
           <button
             type="button"
             onclick={() => (handlesOpen = !handlesOpen)}
@@ -544,7 +545,7 @@
           >
             <h3 class="text-[10px] uppercase tracking-wider text-[var(--color-fg-muted)]">Handles</h3>
             <span class="text-[10px] text-[var(--color-fg-dim)] tabular">
-              {handleList.length} open · {histogram.length} types{#if unresolved > 0} · {unresolved} unresolved{/if} · click to {handlesOpen ? "hide" : "show"}
+              {handleList.length} open · {histogram.length} types · {named} named{#if unresolved > 0} · {unresolved} unresolved{/if} · click to {handlesOpen ? "hide" : "show"}
             </span>
           </button>
           {#if handlesOpen}
@@ -562,19 +563,26 @@
               {/each}
             </div>
             <div class="font-mono text-[11px] max-h-64 overflow-y-auto border-t border-[var(--color-border)]/40 pt-2">
-              <div class="grid grid-cols-[110px_1fr_80px] gap-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-fg-dim)]">
+              <div class="grid grid-cols-[90px_1fr_60px_70px] gap-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-fg-dim)]">
                 <span>Type</span>
-                <span>Handle</span>
+                <span>Name</span>
+                <span class="text-right">Handle</span>
                 <span class="text-right">Access</span>
               </div>
               {#each handleList as h (h.value)}
-                <div class="grid grid-cols-[110px_1fr_80px] gap-2 py-0.5 selectable">
-                  <span
-                    class:text-[var(--color-fg-dim)]={!h.type_name}
-                  >
+                <div class="grid grid-cols-[90px_1fr_60px_70px] gap-2 py-0.5 selectable">
+                  <span class:text-[var(--color-fg-dim)]={!h.type_name}>
                     {h.type_name || "?"}
                   </span>
-                  <span class="text-[var(--color-accent)] tabular">{fmtHandle(h.value)}</span>
+                  <span
+                    class="truncate"
+                    class:text-[var(--color-fg)]={h.name}
+                    class:text-[var(--color-fg-dim)]={!h.name}
+                    title={h.name ?? ""}
+                  >
+                    {h.name ?? "—"}
+                  </span>
+                  <span class="text-[var(--color-accent)] tabular text-right">{fmtHandle(h.value)}</span>
                   <span class="text-[var(--color-fg-muted)] tabular text-right">
                     0x{h.granted_access.toString(16).toUpperCase().padStart(6, "0")}
                   </span>
