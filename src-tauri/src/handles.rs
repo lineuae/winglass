@@ -88,12 +88,20 @@ pub fn enum_handles(pid: u32) -> Result<Vec<HandleInfo>, String> {
     for r in raw {
         let dup = src.and_then(|s| duplicate_locally(s, r.handle_value));
 
+        // Only memoize a *successful* lookup. Caching an empty string here
+        // would poison the type index: if the first handle of a given type
+        // happens to be one we can't duplicate, every later handle of that
+        // same type would inherit the blank and never retry.
         let type_name = if let Some(cached) = type_cache.get(&r.type_index) {
             cached.clone()
         } else {
-            let n = dup.and_then(query_type_name).unwrap_or_default();
-            type_cache.insert(r.type_index, n.clone());
-            n
+            match dup.and_then(query_type_name) {
+                Some(n) => {
+                    type_cache.insert(r.type_index, n.clone());
+                    n
+                }
+                None => String::new(),
+            }
         };
 
         // Name resolution takes ownership of `dup`. On success the worker

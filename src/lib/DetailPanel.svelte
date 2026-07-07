@@ -21,12 +21,17 @@
   let intervalId: ReturnType<typeof setInterval> | null = null;
 
   async function fetchDetail() {
+    // Capture which pid this request is for; if the selection moves while the
+    // call is in flight, a late response for the old pid must not overwrite
+    // the panel now showing a different process.
+    const requested = pid;
     try {
-      const d = await invoke<ProcessDetail | null>("get_process_detail", { pid });
+      const d = await invoke<ProcessDetail | null>("get_process_detail", { pid: requested });
+      if (requested !== pid) return;
       if (d) detail = d;
       loading = false;
     } catch {
-      loading = false;
+      if (requested === pid) loading = false;
     }
   }
 
@@ -149,8 +154,15 @@
       ? new Set(detail.connections.filter((c) => c.remote_ip).map((c) => c.remote_ip!))
       : new Set<string>()
   );
+  // Count unique resolved IPs, not connections — several sockets can share one
+  // remote, and the denominator (publicRemotes) is already deduped by IP, so
+  // counting sockets here could render a nonsensical ratio like "2/1 resolved".
   const resolvedCount = $derived(
-    detail ? detail.connections.filter((c) => c.hostname).length : 0
+    detail
+      ? new Set(
+          detail.connections.filter((c) => c.hostname && c.remote_ip).map((c) => c.remote_ip!)
+        ).size
+      : 0
   );
 </script>
 

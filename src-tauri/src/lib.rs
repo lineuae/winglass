@@ -375,7 +375,11 @@ impl AppState {
         self.handles_cache.insert(pid, result);
     }
 
-    fn build_detail(&mut self, pid: u32) -> Option<ProcessDetail> {
+    fn build_detail(
+        &mut self,
+        pid: u32,
+        threads: Result<Vec<threads::ThreadInfo>, String>,
+    ) -> Option<ProcessDetail> {
         // Refresh workers so newly-arrived sigs land in the response.
         self.drain_workers();
 
@@ -538,7 +542,7 @@ impl AppState {
             net_history,
             connections,
             dlls,
-            threads: match threads::enum_threads(pid) {
+            threads: match threads {
                 Ok(v) => ThreadsResult::Ok(v),
                 Err(e) => ThreadsResult::Error(e),
             },
@@ -601,8 +605,30 @@ fn list_processes(state: State<'_, Shared>) -> Vec<ProcessInfo> {
 
 #[tauri::command]
 fn get_process_detail(pid: u32, state: State<'_, Shared>) -> Option<ProcessDetail> {
+    // The expensive per-PID enumerations run WITHOUT the AppState lock so a
+    // handle-heavy process — handle name resolution alone is capped at ~2s —
+    // doesn't stall the 1 Hz list_processes refresh waiting on the same mutex.
+    // Threads change every tick and aren't cached; handles and DLLs are, so we
+    // only enumerate them on a cache miss and store the result under the lock.
+    let threads = threads::enum_threads(pid);
+    let (need_handles, need_dlls) = {
+        let app = state.lock().unwrap();
+        (
+            !app.handles_cache.contains_key(&pid),
+            !app.dll_cache.contains_key(&pid),
+        )
+    };
+    let fresh_handles = need_handles.then(|| handles::enum_handles(pid));
+    let fresh_dlls = need_dlls.then(|| win::enum_dlls(pid));
+
     let mut app = state.lock().unwrap();
-    app.build_detail(pid)
+    if let Some(h) = fresh_handles {
+        app.handles_cache.entry(pid).or_insert(h);
+    }
+    if let Some(d) = fresh_dlls {
+        app.dll_cache.entry(pid).or_insert(d);
+    }
+    app.build_detail(pid, threads)
 }
 
 #[tauri::command]

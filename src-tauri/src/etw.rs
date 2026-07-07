@@ -83,9 +83,12 @@ impl NetMonitor {
 
         // Session names live in the kernel until stopped or reboot. If a
         // previous winglass run was killed hard, its named session is still
-        // there and StartTrace fails with ERROR_ALREADY_EXISTS. Best-effort
-        // cleanup before starting our own.
-        let session_name = format!("winglass-net-{}", std::process::id());
+        // there and StartTrace fails with ERROR_ALREADY_EXISTS. The name must
+        // be fixed, not per-PID: a PID-suffixed name could never match the
+        // dead run's session, so every crash would leak a real-time logger
+        // slot (they're globally limited) until reboot. Fixed name means a
+        // single winglass instance owns the session — the intended usage.
+        let session_name = "winglass-net".to_string();
         let _ = stop_trace_by_name(&session_name);
 
         let trace = UserTrace::new()

@@ -202,7 +202,10 @@
       let cur = byPid.get(pid);
       while (cur) {
         const ppid = cur.parent_pid;
-        if (ppid === null || !byPid.has(ppid)) break;
+        // Stop at a root, or once we reach a pid already kept — the latter
+        // both prunes redundant work and breaks parent cycles (a self-parent
+        // or a PID-reuse loop) that would otherwise spin forever.
+        if (ppid === null || !byPid.has(ppid) || keep.has(ppid)) break;
         keep.add(ppid);
         cur = byPid.get(ppid);
       }

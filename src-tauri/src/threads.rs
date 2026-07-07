@@ -105,9 +105,16 @@ fn walk_for_pid(buf: &[u8], target_pid: u32) -> Vec<ThreadInfo> {
         let this_pid = unsafe { read_usize(record, SPI_UNIQUE_PROCESS_ID) } as u32;
 
         if this_pid == target_pid {
-            let threads_ptr = unsafe { record.add(SPI_HEADER_SIZE) };
+            let threads_base = offset + SPI_HEADER_SIZE;
             for i in 0..num_threads as usize {
-                let t = unsafe { threads_ptr.add(i * STI_SIZE) };
+                let t_off = threads_base + i * STI_SIZE;
+                // Bound each read against the buffer the kernel gave us, the
+                // same guard collect_for_pid uses — a truncated record or a
+                // misread thread count must stop the walk, not read past it.
+                if t_off + STI_SIZE > buf.len() {
+                    break;
+                }
+                let t = unsafe { buf.as_ptr().add(t_off) };
                 out.push(read_thread(t));
             }
             return out;
