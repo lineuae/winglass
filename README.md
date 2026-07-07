@@ -152,7 +152,7 @@ The section header counts named vs unresolved so you can see how much
 of the enumeration finished within the 2 s global budget.
 
 <p align="center">
-  <img src="docs/screenshots/detail-handles.png" alt="Detail panel Handles section for explorer.exe: 7111 open handles across 25 types, 1745 resolved names visible next to their handle values and access masks" width="720" />
+  <img src="docs/screenshots/detail-handles.png" alt="Detail panel for explorer.exe: tail of the per-DLL signature list, then the Handles section — 7917 open handles across 25 types, type histogram, and handle rows with resolved object names, handle values and access masks" width="720" />
 </p>
 
 **DLLs** — every module loaded into the process, one per line, each with
@@ -263,25 +263,27 @@ Then sets rustup's default to `stable-x86_64-pc-windows-msvc` and runs
 ### GeoIP database
 
 The country-code badge on public remote IPs comes from a db-ip.com
-IP-to-Country Lite MMDB. It ships bundled with the release installer
-but isn't in the git tree (~8 MB binary, refreshed monthly upstream).
-Fetch the current month's file before your first build:
+IP-to-Country Lite MMDB (~8 MB, refreshed monthly upstream, not checked
+into git). You don't fetch it by hand:
+
+- **Installing a release** — the MSI/NSIS installer already bundles it.
+  Nothing to do.
+- **Building from source** — `scripts\setup.ps1` downloads it as its last
+  step, so a fresh clone is ready to build with country badges working.
+
+To refresh it or grab it without re-running full setup:
 
 ```powershell
-$ym = Get-Date -Format "yyyy-MM"
-Invoke-WebRequest "https://download.db-ip.com/free/dbip-country-lite-$ym.mmdb.gz" `
-  -OutFile "src-tauri/resources/GeoLite2-Country.mmdb.gz"
-& tar -xzf "src-tauri/resources/GeoLite2-Country.mmdb.gz" -C "src-tauri/resources"
-Remove-Item "src-tauri/resources/GeoLite2-Country.mmdb.gz"
+.\scripts\fetch-geoip.ps1          # skips if already present
+.\scripts\fetch-geoip.ps1 -Force   # re-download this month's file
 ```
 
-The MSI/NSIS bundler picks it up automatically. For `npm run tauri dev`,
-Tauri's `resource_dir()` in dev mode returns `target\debug\`, so copy
-the file there too — otherwise the badge stays empty until you run
-against a release build. Missing DB = feature silently disabled, not
-an error.
-
-Data is licensed CC BY 4.0 by db-ip.com.
+The release workflow calls the same script, so there's one source of
+truth for the fetch. Missing DB = feature silently disabled, not an
+error — so if the badges are empty under `npm run tauri dev` (Tauri
+resolves resources differently in dev than in a packaged build), that's
+cosmetic and clears up in the installer/release build. Data is licensed
+CC BY 4.0 by db-ip.com.
 
 ### Development
 
@@ -331,21 +333,35 @@ has to go manually.
 
 ## Architecture summary
 
-**Rust backend** — Tauri v2 exposes three commands (`list_processes`,
-`get_process_detail`, `kill_process`) backed by a `Mutex<AppState>`.
-State owns:
+**Rust backend** — Tauri v2 exposes four commands (`list_processes`,
+`get_process_detail`, `kill_process`, and `net_monitor_active`, which
+tells the UI whether the ETW session came up) backed by a
+`Mutex<AppState>`. State owns:
 
 - A `sysinfo::System` for CPU/memory/basic-metadata
-- Per-PID caches: `exe_path`, `sig`, `dns`, `dll`, `io_state`,
-  `io_delta`, `io_total`, `cpu_history`, `mem_history`, `sha`
-- Two background workers reachable through mpsc channels: signature
-  verification (`verify::start_worker`) and reverse DNS
-  (`dns::start_worker`)
+- Per-PID caches: `exe_path`, `sig`, `dns`, `dll`, `handles`,
+  `io_state`/`io_delta`/`io_total`,
+  `net_state`/`net_delta`/`net_total`,
+  `cpu_history`/`mem_history`/`net_history`, `sha`
+- Two mpsc-backed worker threads for the slow, occasionally-hanging calls
+  that must never hold the mutex: signature verification
+  (`verify::start_worker`) and reverse DNS (`dns::start_worker`)
+- When launched with the required privileges, an ETW session
+  (`etw::NetMonitor`) accumulating per-PID network bytes on its own
+  processing thread; commands take a cheap snapshot of it at 1 Hz
+
+The per-detail enumerations that can be slow — open handles (name
+resolution is capped at a 2 s budget) and loaded DLLs — run *outside*
+the lock and populate their caches, so opening a handle-heavy process
+never stalls the 1 Hz table refresh behind the same mutex.
 
 **Frontend** — SvelteKit 5 in single-page mode with Tailwind CSS v4 for
-styling and Lucide-svelte for icons. Two components: the process table
-route (`+page.svelte`) and the detail panel (`DetailPanel.svelte`).
-Both poll their Tauri command every 1 s.
+styling and Lucide-svelte for icons. Two polling views — the process
+table route (`+page.svelte`) and the detail panel
+(`DetailPanel.svelte`), each invoking its Tauri command every 1 s — over
+a shared `Sparkline.svelte` and small `$lib` helpers: `format.ts` for
+byte/rate/duration formatting and `sig.ts` for the one signature→color
+mapping both views resolve through.
 
 **Windows APIs** — sysinfo covers the basics; everything else is direct
 calls via the `windows` crate:
@@ -358,8 +374,15 @@ calls via the `windows` crate:
 - `NtQueryInformationProcess(ProcessProtectionInformation, 61)` for
   PPL/PP labels
 - `EnumProcessModulesEx` for DLL enumeration
+- `NtQuerySystemInformation(SystemProcessInformation, 5)` for per-thread
+  state and wait reasons
+- `NtQuerySystemInformation(SystemExtendedHandleInformation, 64)` +
+  `DuplicateHandle` + `NtQueryObject` for open handles and their object
+  names
 - `GetProcessIoCounters` for disk I/O deltas
 - `GetExtendedTcpTable` / `GetExtendedUdpTable` for per-process sockets
+- `Microsoft-Windows-Kernel-Network` ETW provider (via the `ferrisetw`
+  crate) for per-process network throughput
 - `GetNameInfoW` for reverse DNS
 - `sha2` (Rust crate) for SHA-256
 
