@@ -88,6 +88,18 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# --- GeoIP database -------------------------------------------------------
+# Fetched here so a fresh clone is ready to run without any manual download.
+# Non-fatal: the country-code badges are the only thing that needs it, and
+# they degrade to empty if the download can't happen (offline setup, etc.).
+
+Write-Step "GeoIP country database"
+try {
+    & "$PSScriptRoot\fetch-geoip.ps1"
+} catch {
+    Write-Skip "GeoIP download skipped ($($_.Exception.Message)). Country badges stay empty; re-run scripts\fetch-geoip.ps1 later. Not fatal."
+}
+
 Write-Host ""
 Write-Ok "Setup complete."
 Write-Host ""

@@ -29,14 +29,7 @@ jobs:
 
       - name: Fetch GeoIP database (db-ip.com Lite, CC BY 4.0)
         shell: pwsh
-        run: |
-          $ym = Get-Date -Format "yyyy-MM"
-          $url = "https://download.db-ip.com/free/dbip-country-lite-$ym.mmdb.gz"
-          New-Item -ItemType Directory -Force -Path src-tauri/resources | Out-Null
-          Invoke-WebRequest $url -OutFile src-tauri/resources/GeoLite2-Country.mmdb.gz
-          tar -xzf src-tauri/resources/GeoLite2-Country.mmdb.gz -C src-tauri/resources
-          Remove-Item src-tauri/resources/GeoLite2-Country.mmdb.gz
-          Get-Item src-tauri/resources/GeoLite2-Country.mmdb
+        run: ./scripts/fetch-geoip.ps1
 
       - run: npm ci
 
