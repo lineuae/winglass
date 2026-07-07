@@ -17,6 +17,8 @@
   } from "lucide-svelte";
   import DetailPanel from "$lib/DetailPanel.svelte";
   import Sparkline from "$lib/Sparkline.svelte";
+  import { fmtMbps } from "$lib/format";
+  import { sigKind, sigColor } from "$lib/sig";
   import type { ProcessInfo, SigInfo } from "$lib/types";
 
   type SortKey = "pid" | "cpu" | "mem_mb" | "io_bps" | "net_bps" | "name";
@@ -43,15 +45,6 @@
   let filterInput = $state<HTMLInputElement | null>(null);
   let tableContainer = $state<HTMLDivElement | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // Single classifier the badge color, badge title, stats counter, and filter
-  // predicates all switch on — so widening the "Windows OS" rule (or adding a
-  // new SigStatus variant) changes one place, not five.
-  type SigKind = "os" | "signed" | "unsigned" | "failed" | "pending";
-  function sigKind(sig: SigInfo): SigKind {
-    if (sig.status === "valid") return sig.is_ms_windows ? "os" : "signed";
-    return sig.status;
-  }
 
   type FilterKey = "unsigned" | "msWindows" | "net";
   type FilterDef = {
@@ -236,22 +229,6 @@
   });
 
   const MEBI = 1024 * 1024;
-  function fmtMbps(bps: number): string {
-    const mb = bps / MEBI;
-    if (mb < 0.05) return "";
-    return mb.toFixed(1);
-  }
-
-  const SIG_COLOR: Record<SigKind, string> = {
-    os: "var(--color-ok)",
-    signed: "var(--color-fg-muted)",
-    unsigned: "var(--color-danger)",
-    failed: "var(--color-warn)",
-    pending: "var(--color-fg-dim)",
-  };
-  function sigColor(sig: SigInfo): string {
-    return SIG_COLOR[sigKind(sig)];
-  }
 
   function sigTitle(sig: SigInfo): string {
     switch (sigKind(sig)) {

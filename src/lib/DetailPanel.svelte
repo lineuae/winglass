@@ -3,6 +3,7 @@
   import { X, Skull, ShieldCheck, Shield, ShieldOff, ShieldAlert } from "lucide-svelte";
   import Sparkline from "./Sparkline.svelte";
   import { fmtBytes, fmtMbps, fmtDuration } from "./format";
+  import { sigColor } from "./sig";
   import type { ProcessDetail, SigInfo, ThreadInfo, HandleInfo } from "./types";
 
   interface Props {
@@ -77,27 +78,20 @@
   }
 
   function sigChip(sig: SigInfo) {
+    const color = sigColor(sig);
     if (sig.status === "valid" && sig.is_ms_windows)
-      return { label: `Windows OS  ${sig.signer ?? ""}`, color: "var(--color-ok)", Icon: ShieldCheck };
+      return { label: `Windows OS  ${sig.signer ?? ""}`, color, Icon: ShieldCheck };
     if (sig.status === "valid")
-      return { label: `Signed  ${sig.signer ?? ""}`, color: "var(--color-fg-muted)", Icon: Shield };
+      return { label: `Signed  ${sig.signer ?? ""}`, color, Icon: Shield };
     if (sig.status === "unsigned")
-      return { label: "Unsigned", color: "var(--color-danger)", Icon: ShieldOff };
+      return { label: "Unsigned", color, Icon: ShieldOff };
     if (sig.status === "failed")
       return {
         label: `Verify failed  0x${sig.error_code?.toString(16).toUpperCase()}`,
-        color: "var(--color-warn)",
+        color,
         Icon: ShieldAlert,
       };
-    return { label: "verifying...", color: "var(--color-fg-dim)", Icon: Shield };
-  }
-
-  function dllColor(sig: SigInfo): string {
-    if (sig.status === "valid" && sig.is_ms_windows) return "var(--color-ok)";
-    if (sig.status === "valid") return "var(--color-fg-muted)";
-    if (sig.status === "unsigned") return "var(--color-danger)";
-    if (sig.status === "failed") return "var(--color-warn)";
-    return "var(--color-fg-dim)";
+    return { label: "verifying...", color, Icon: Shield };
   }
 
   let envOpen = $state(false);
@@ -522,7 +516,7 @@
               <div class="flex items-center gap-2 py-0.5 min-w-0">
                 <span
                   class="w-1 h-1 rounded-full shrink-0"
-                  style:background-color={dllColor(d.sig)}
+                  style:background-color={sigColor(d.sig)}
                 ></span>
                 <span
                   class="shrink-0"
