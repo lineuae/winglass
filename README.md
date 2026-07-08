@@ -97,9 +97,6 @@ each level, so a click on CPU still ranks the children of every parent
 by CPU %. Filters preserve ancestors of matched rows dimmed to 50 % so
 the hierarchy stays legible under `u`/`w`/`n`.
 
-<p align="center">
-</p>
-
 ### Detail panel
 
 Click a row and a right-side panel slides in with everything winglass
